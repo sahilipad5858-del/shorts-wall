@@ -1,0 +1,32 @@
+name: Refresh Shorts pool
+
+# Keeps the baked-in video pool fresh: every day it scrapes the channel's
+# public /shorts page (no API key, no login) and updates index.html.
+# New uploads appear on the wall within ~24h. Safe by design: the script
+# never empties the pool — if YouTube blocks the fetch, the file is untouched.
+on:
+  schedule:
+    - cron: "0 3 * * *" # daily 03:00 UTC
+  workflow_dispatch: # manual "Run workflow" button = refresh right now
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Refresh preloaded pool
+        working-directory: .
+        run: python3 .github/workflows/refresh_pool.py
+      - name: Commit if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html
+          git diff --cached --quiet || git commit -m "Auto-refresh Shorts pool"
+          git push
