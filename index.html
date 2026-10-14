@@ -174,15 +174,22 @@ function pickAndRender(){
 }
 
 // ---------- channel resolve, no key ----------
+// Hardcoded IDs skip the network lookup entirely (proxies often fail on mobile).
+const KNOWN_CHANNELS = {
+  "blvcktorque": "UCc3WaSgyMJ4q1orDuTla1BA"
+};
 async function resolveChannelId(input){
   input=input.trim();
   let m = input.match(/UC[\w-]{22}/);
   if(m) return m[0];
   let h = (input.match(/@[\w.\-]+/)||[])[0];
   if(h){
+    const key = h.replace(/^@/,'').toLowerCase();
+    if(KNOWN_CHANNELS[key]) return KNOWN_CHANNELS[key];
+    try{ const cached = localStorage.getItem('ch_'+key); if(cached && /UC[\w-]{22}/.test(cached)) return cached; }catch(e){}
     const id = await handleToChannelId(h).catch(()=>null);
-    if(id) return id;
-    throw new Error(`Could not resolve ${h}. Open youtube.com/${h} → Share channel → copy the /channel/UC… link and paste that.`);
+    if(id){ try{ localStorage.setItem('ch_'+key,id); }catch(e){} return id; }
+    throw new Error(`Could not resolve ${h}. Paste this instead (same channel, always works): UCc3WaSgyMJ4q1orDuTla1BA`);
   }
   if(/youtube\.com|youtu\.be/.test(input)){
     const id = await urlToChannelIdViaProxy(input).catch(()=>null);
@@ -208,18 +215,33 @@ async function urlToChannelIdViaProxy(pageUrl){
   throw new Error('url not resolved');
 }
 async function fetchViaProxyText(pageUrl){
-  // primary: allorigins, fallback: corsproxy.io
+  // Try several public CORS proxies — allorigins is often down/rate-limited.
+  const errors=[];
+  // 1) allorigins (JSON wrapper)
   try{
-    const r = await fetch('https://api.allorigins.win/get?url='+encodeURIComponent(pageUrl));
-    if(!r.ok) throw new Error('p1');
-    const j = await r.json();
-    if(j.contents) return j.contents;
-    throw new Error('empty');
-  }catch(e){
-    const r2 = await fetch('https://corsproxy.io/?url='+encodeURIComponent(pageUrl));
-    if(!r2.ok) throw new Error('proxy failed (HTTP '+r2.status+'). Try the /channel/UC… URL.');
-    return await r2.text();
-  }
+    const ctl=new AbortController(); const t=setTimeout(()=>ctl.abort(),12000);
+    const r = await fetch('https://api.allorigins.win/get?url='+encodeURIComponent(pageUrl),{signal:ctl.signal});
+    clearTimeout(t);
+    if(r.ok){ const j = await r.json(); if(j.contents) return j.contents; }
+    errors.push('allorigins:'+r.status);
+  }catch(e){ errors.push('allorigins:'+(e.name||'fail')); }
+  // 2) codetabs (plain text)
+  try{
+    const ctl=new AbortController(); const t=setTimeout(()=>ctl.abort(),12000);
+    const r = await fetch('https://api.codetabs.com/v1/proxy?quest='+encodeURIComponent(pageUrl),{signal:ctl.signal});
+    clearTimeout(t);
+    if(r.ok){ const txt = await r.text(); if(txt && txt.length>500) return txt; }
+    errors.push('codetabs:'+r.status);
+  }catch(e){ errors.push('codetabs:'+(e.name||'fail')); }
+  // 3) corsproxy.io (plain text)
+  try{
+    const ctl=new AbortController(); const t=setTimeout(()=>ctl.abort(),12000);
+    const r = await fetch('https://corsproxy.io/?url='+encodeURIComponent(pageUrl),{signal:ctl.signal});
+    clearTimeout(t);
+    if(r.ok){ const txt = await r.text(); if(txt && txt.length>500) return txt; }
+    errors.push('corsproxy:'+r.status);
+  }catch(e){ errors.push('corsproxy:'+(e.name||'fail')); }
+  throw new Error('Fetch blocked ('+errors.join(', ')+'). Paste the /channel/UC… ID directly — it skips this step.');
 }
 
 // ---------- no-key video sources ----------
